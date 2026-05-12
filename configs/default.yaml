@@ -1,0 +1,25 @@
+# Project-wide configuration. Changes here propagate to notebooks and
+# scripts via `load_config()` (to be written when needed).
+
+random_seed: 42
+
+# Outcome used to train CATE models. `visit` is dense and well-powered.
+training_outcome: visit
+
+# Outcome used to evaluate the value of a policy. `spend` is sparse but
+# is the only outcome with money attached, so it's what we ultimately care
+# about. The training/evaluation split is a deliberate choice — see Phase 1
+# notes in the writeup.
+policy_outcome: spend
+
+# Business parameters for the cost-aware policy. These are knobs, not
+# truths. Sensitivity analyses in Phase 5 will sweep them.
+economics:
+  cost_per_email_usd: 0.10
+  margin_on_spend: 0.30  # dollar of spend -> $0.30 to the business
+
+# Train/val/test fractions, stratified by treatment.
+splits:
+  train_frac: 0.6
+  val_frac: 0.2
+  test_frac: 0.2
