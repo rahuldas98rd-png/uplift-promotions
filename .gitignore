@@ -24,3 +24,5 @@ Thumbs.db
 # Reports — keep figures, ignore drafts
 reports/figures/*.png
 !reports/figures/.gitkeep
+
+notes.txt
