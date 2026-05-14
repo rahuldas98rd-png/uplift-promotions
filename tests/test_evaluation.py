@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+import pandas as pd
 
 from uplift.evaluation import (
     qini_coefficient,
@@ -15,6 +16,8 @@ from uplift.evaluation import (
     policy_from_cate,
     snips_value,
     topk_policy,
+    assign_segments,
+    segment_summary,
 )
 
 
@@ -184,3 +187,36 @@ def test_ips_validates_propensity_range():
     except ValueError:
         return  # expected
     raise AssertionError("Should have raised on propensity=1.0")
+
+
+def test_assign_segments_four_categories():
+    cate = np.array([-0.1, -0.1, 0.1, 0.1])
+    base = np.array([0.3, 0.7, 0.3, 0.7])
+    segs = assign_segments(cate, base)
+    expected = ["lost_cause", "do_not_disturb", "persuadable", "sure_thing"]
+    assert list(segs) == expected
+
+
+def test_assign_segments_handles_thresholds():
+    cate = np.array([0.0, 0.01])
+    base = np.array([0.5, 0.5])
+    segs = assign_segments(cate, base, cate_threshold=0.0, baseline_threshold=0.5)
+    # cate=0.0 not strictly > threshold → not high_cate
+    # cate=0.01 strictly > threshold → high_cate
+    assert segs[0] in ("lost_cause", "do_not_disturb")  # not high_cate
+    assert segs[1] in ("persuadable", "sure_thing")  # high_cate
+
+
+def test_segment_summary_returns_count_and_proportion():
+    segs = np.array(["persuadable", "persuadable", "sure_thing", "lost_cause"])
+    feats = pd.DataFrame(
+        {
+            "recency": [1, 2, 3, 4],
+            "history": [100.0, 150.0, 200.0, 80.0],
+        }
+    )
+    summary = segment_summary(segs, feats)
+    assert "count" in summary.columns
+    assert "proportion" in summary.columns
+    assert summary["count"].sum() == 4
+    assert abs(summary["proportion"].sum() - 1.0) < 1e-9

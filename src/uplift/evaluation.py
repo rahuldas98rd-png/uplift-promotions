@@ -322,3 +322,76 @@ def topk_policy(cate: np.ndarray, k: float) -> np.ndarray:
         policy = np.zeros(len(cate), dtype=int)
         policy[keep] = 1
     return policy
+
+
+# ---------------------------------------------------------------------------
+# Customer segmentation by (baseline response, predicted CATE)
+# ---------------------------------------------------------------------------
+
+
+def assign_segments(
+    cate: np.ndarray,
+    baseline: np.ndarray,
+    cate_threshold: float = 0.0,
+    baseline_threshold: float = 0.5,
+) -> np.ndarray:
+    """Classify customers into the four uplift segments.
+
+    Uses two thresholds:
+    - cate_threshold: CATE > threshold means "treatment helps this customer"
+    - baseline_threshold: μ_0(x) > threshold means "would have responded
+      without treatment"
+
+    For binary outcomes, baseline_threshold = 0.5 is the natural choice
+    (more likely than not to visit without the email). For continuous
+    outcomes (spend), use the median observed baseline as the threshold.
+
+    Returns
+    -------
+    np.ndarray of strings, one per customer:
+      "persuadable", "sure_thing", "lost_cause", "do_not_disturb"
+    """
+    cate = np.asarray(cate).ravel()
+    baseline = np.asarray(baseline).ravel()
+    if len(cate) != len(baseline):
+        raise ValueError(f"Length mismatch: cate={len(cate)}, baseline={len(baseline)}")
+
+    high_cate = cate > cate_threshold
+    high_baseline = baseline > baseline_threshold
+
+    segments = np.empty(len(cate), dtype=object)
+    segments[high_cate & ~high_baseline] = "persuadable"
+    segments[high_cate & high_baseline] = "sure_thing"
+    segments[~high_cate & ~high_baseline] = "lost_cause"
+    segments[~high_cate & high_baseline] = "do_not_disturb"
+    return segments
+
+
+def segment_summary(
+    segments: np.ndarray,
+    features: pd.DataFrame,
+) -> pd.DataFrame:
+    """Mean feature values per segment, for narrative interpretation.
+
+    Produces a comparison table showing how segments differ on the
+    interpretable features. This is the input to the 'who are the
+    persuadables in human terms?' analysis.
+
+    For numeric columns: returns the mean. For categorical/boolean:
+    returns the proportion of each level via numeric coercion of
+    indicator columns. The caller typically prepares feature data
+    accordingly.
+    """
+    df = features.copy()
+    df["_segment"] = segments
+    counts = df["_segment"].value_counts().rename("count")
+    proportions = (counts / counts.sum()).rename("proportion")
+
+    # Compute mean per segment for numeric columns
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    means = df.groupby("_segment", observed=True)[numeric_cols].mean()
+
+    summary = means.copy()
+    summary.insert(0, "count", counts)
+    summary.insert(1, "proportion", proportions)
+    return summary.sort_values("count", ascending=False)

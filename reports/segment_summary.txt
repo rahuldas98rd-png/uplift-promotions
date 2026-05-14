@@ -1,0 +1,39 @@
+
+SEGMENT ANALYSIS SUMMARY
+========================
+
+Of 12,800 test customers, the X-learner CATE estimator identifies four
+behavioral segments:
+
+PERSUADABLES — 49.0% of customers
+  These customers visit/buy ONLY if emailed. Targeting them creates
+  outcome. Realized lift in this segment: 
+  +0.0695 (t = +9.1).
+  They are typically NOT recent buyers, NOT cold, and engage via 
+  Web or Multichannel.
+
+SURE-THINGS — 43.1% of customers
+  These customers visit regardless of treatment. Targeting them wastes
+  the email cost. Realized lift: 
+  +0.0507 (t = +4.9).
+  Recent purchasers with high historical spend.
+
+LOST CAUSES — 1.0% of customers
+  These customers don't visit either way. Targeting wastes the cost.
+  Realized lift: 
+  +0.0892 (t = +2.1).
+  Cold customers, often Phone-only channel, often newbies who churned.
+
+DO-NOT-DISTURBS — 6.9% of customers
+  These customers are LESS likely to visit if emailed. Targeting them
+  is actively harmful. Realized lift: 
+  +0.0754 (t = +3.1).
+  Smallest segment, noisiest estimate. Some baseline customers
+  respond poorly to email contact.
+
+OPERATIONAL IMPLICATION
+-----------------------
+The naive 'target high-propensity buyers' policy spreads spend across
+sure-things and lost-causes, missing the persuadables it should target.
+A CATE-aware policy reaches the 49% who actually create
+incremental outcome — and avoids the 7% it would otherwise alienate.
