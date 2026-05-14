@@ -22,7 +22,23 @@ Thumbs.db
 *.swp
 
 # Reports — keep figures, ignore drafts
-reports/figures/*.png
 !reports/figures/.gitkeep
 
 notes.txt
+
+# Data — must never be committed
+data/raw/*.csv
+data/processed/*.parquet
+data/processed/*.npy
+
+# Standard Python/IDE
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
