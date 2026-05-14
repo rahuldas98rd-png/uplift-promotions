@@ -25,6 +25,7 @@ import pandas as pd
 from lightgbm import LGBMClassifier, LGBMRegressor
 
 from uplift.treatment import encode_features
+from sklearn.model_selection import StratifiedKFold
 
 
 # ---------------------------------------------------------------------------
@@ -225,3 +226,115 @@ class XLearner:
             e = self.train_propensity_  # scalar; numpy broadcasts
 
         return e * tau_0 + (1 - e) * tau_1
+
+
+# ---------------------------------------------------------------------------
+# DR-learner (Doubly Robust)
+# ---------------------------------------------------------------------------
+
+
+class DRLearner:
+    """Doubly Robust meta-learner with K-fold cross-fitting.
+
+    Constructs a pseudo-outcome ψ that combines model-based and
+    inverse-propensity-weighted estimates of the individual treatment
+    effect, then regresses ψ on X.
+
+        ψ = μ_1(X) - μ_0(X)
+            + T (Y - μ_1(X)) / e(X)
+            - (1 - T) (Y - μ_0(X)) / (1 - e(X))
+
+    Doubly robust: consistent if EITHER the outcome models OR the
+    propensity model is correctly specified. Cross-fitting protects
+    against using in-sample nuisance predictions, which would bias ψ.
+
+    Parameters
+    ----------
+    base_params
+        LightGBM hyperparameters for nuisance and final models.
+    n_folds
+        Number of folds for cross-fitting. 5 is the standard choice.
+    propensity_clip
+        Clip propensities to [c, 1-c] to avoid division blow-ups.
+        Only matters on observational data; randomized propensities
+        are well away from 0 and 1.
+    random_state
+        Seed for fold assignment.
+    """
+
+    def __init__(
+        self,
+        base_params: dict | None = None,
+        n_folds: int = 5,
+        propensity_clip: float = 0.05,
+        random_state: int = 42,
+    ):
+        self.base_params = {**_default_params(), **(base_params or {})}
+        self.n_folds = n_folds
+        self.propensity_clip = propensity_clip
+        self.random_state = random_state
+
+    def fit(self, X: pd.DataFrame, T, Y) -> "DRLearner":
+        X_enc = encode_features(X)
+        self.feature_cols_ = list(X_enc.columns)
+
+        T_arr = np.asarray(T)
+        Y_arr = np.asarray(Y).astype(float)
+        n = len(X_enc)
+
+        self.is_classifier_ = _is_binary(Y_arr)
+
+        # Allocate OOF prediction arrays
+        mu0_oof = np.zeros(n)
+        mu1_oof = np.zeros(n)
+        e_oof = np.zeros(n)
+
+        kf = StratifiedKFold(n_splits=self.n_folds, shuffle=True, random_state=self.random_state)
+
+        # Cross-fitting: for each fold, fit nuisance models on the other
+        # K-1 folds and predict on the held-out fold.
+        for train_idx, val_idx in kf.split(X_enc, T_arr):
+            X_tr, X_va = X_enc.iloc[train_idx], X_enc.iloc[val_idx]
+            T_tr = T_arr[train_idx]
+            Y_tr = Y_arr[train_idx]
+
+            treated_tr = T_tr == 1
+
+            # Per-arm outcome models for this fold
+            mu0_f = _make_model(self.is_classifier_, self.base_params)
+            mu1_f = _make_model(self.is_classifier_, self.base_params)
+            mu0_f.fit(X_tr[~treated_tr], Y_tr[~treated_tr])
+            mu1_f.fit(X_tr[treated_tr], Y_tr[treated_tr])
+
+            mu0_oof[val_idx] = _predict_outcome(mu0_f, X_va, self.is_classifier_)
+            mu1_oof[val_idx] = _predict_outcome(mu1_f, X_va, self.is_classifier_)
+
+            # Propensity model — always a classifier
+            e_f = LGBMClassifier(**self.base_params)
+            e_f.fit(X_tr, T_tr)
+            e_oof[val_idx] = e_f.predict_proba(X_va)[:, 1]
+
+        # Clip propensities to avoid division explosions on rare extremes
+        e_oof = np.clip(e_oof, self.propensity_clip, 1 - self.propensity_clip)
+
+        # Construct the doubly robust pseudo-outcome
+        psi = (
+            mu1_oof
+            - mu0_oof
+            + T_arr * (Y_arr - mu1_oof) / e_oof
+            - (1 - T_arr) * (Y_arr - mu0_oof) / (1 - e_oof)
+        )
+
+        # Stash for diagnostics (the average pseudo-outcome is itself
+        # a valid ATE estimate, often called the AIPW estimator)
+        self.psi_train_ = psi
+        self.aipw_ate_ = float(psi.mean())
+
+        # Final stage: regress ψ on X to get τ(x)
+        self.tau_model_ = LGBMRegressor(**self.base_params)
+        self.tau_model_.fit(X_enc, psi)
+        return self
+
+    def predict_cate(self, X: pd.DataFrame) -> np.ndarray:
+        X_enc = encode_features(X).reindex(columns=self.feature_cols_, fill_value=0)
+        return self.tau_model_.predict(X_enc)

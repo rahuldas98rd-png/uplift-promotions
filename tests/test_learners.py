@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from uplift.data import load_raw
-from uplift.learners import SLearner, TLearner, XLearner
+from uplift.learners import SLearner, TLearner, XLearner, DRLearner
 from uplift.treatment import get_features, make_binary_treatment
 
 
@@ -101,3 +101,25 @@ def test_xlearner_continuous_outcome(small_data):
     cate = learner.predict_cate(X)
     assert cate.shape == (len(X),)
     assert not learner.is_classifier_
+
+
+def test_drlearner_shape(small_data):
+    X, T, Y, _ = small_data
+    cate = DRLearner(n_folds=3).fit(X, T, Y).predict_cate(X)
+    assert cate.shape == (len(X),)
+
+
+def test_drlearner_aipw_ate_near_naive(small_data):
+    """The AIPW estimator (mean of ψ) should match the naive ATE under randomization."""
+    X, T, Y, _ = small_data
+    learner = DRLearner(n_folds=3).fit(X, T, Y)
+    naive = Y[T == 1].mean() - Y[T == 0].mean()
+    # AIPW is a more efficient estimator but should agree with naive in expectation
+    assert abs(learner.aipw_ate_ - naive) < 0.02
+
+
+def test_drlearner_no_extreme_psi(small_data):
+    """Pseudo-outcomes shouldn't blow up — propensity clipping should hold them in."""
+    X, T, Y, _ = small_data
+    learner = DRLearner(n_folds=3).fit(X, T, Y)
+    assert np.abs(learner.psi_train_).max() < 50, "extreme ψ — check propensity clipping"
