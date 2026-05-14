@@ -8,7 +8,9 @@ from uplift.data import (
     EXPECTED_ROW_COUNT,
     load_raw,
 )
+
 from uplift.treatment import make_binary_treatment, make_xty, naive_ate
+from uplift.splits import make_splits
 
 
 def test_load_raw_shape():
@@ -67,3 +69,35 @@ def test_naive_ate_visit_is_positive_and_significant():
     assert result["ate"] > 0
     # t-stat > 2 means clearly significant
     assert result["ate"] / result["ate_se"] > 2
+
+
+def test_splits_sum_to_full_data():
+    splits = make_splits()
+    total = sum(len(df) for df in splits.values())
+    assert total == 64000
+
+
+def test_splits_treatment_balance():
+    """Stratification should keep treatment rate constant across splits."""
+    splits = make_splits()
+    rates = {name: make_binary_treatment(df).mean() for name, df in splits.items()}
+    overall_rate = 2 / 3
+    for name, rate in rates.items():
+        assert abs(rate - overall_rate) < 0.005, f"{name} split has rate {rate}"
+
+
+def test_splits_disjoint():
+    splits = make_splits()
+    train_idx = set(splits["train"].index)
+    val_idx = set(splits["val"].index)
+    test_idx = set(splits["test"].index)
+    assert train_idx.isdisjoint(val_idx)
+    assert train_idx.isdisjoint(test_idx)
+    assert val_idx.isdisjoint(test_idx)
+
+
+def test_splits_reproducible():
+    s1 = make_splits(seed=42)
+    s2 = make_splits(seed=42)
+    for name in ("train", "val", "test"):
+        assert s1[name].index.equals(s2[name].index)

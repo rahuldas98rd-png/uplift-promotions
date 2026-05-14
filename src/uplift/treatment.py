@@ -23,6 +23,7 @@ from typing import Literal
 
 import numpy as np
 import pandas as pd
+import re
 
 # ---------------------------------------------------------------------------
 # Column names
@@ -146,3 +147,18 @@ def naive_ate(df: pd.DataFrame, outcome: OutcomeName = "visit") -> dict[str, flo
         "n_treated": int(len(y1)),
         "n_control": int(len(y0)),
     }
+
+
+def encode_features(X: pd.DataFrame) -> pd.DataFrame:
+    """One-hot encode categoricals with LightGBM-safe column names.
+
+    pd.get_dummies produces names like 'history_segment_2) $100 - $200'.
+    LightGBM rejects feature names containing JSON-special characters
+    (parentheses, dollar signs, spaces, etc.), so we sanitize to keep
+    only alphanumerics and underscores. The mapping is one-way but
+    consistent: same input always yields same output column names, which
+    is what model alignment needs.
+    """
+    X_enc = pd.get_dummies(X, drop_first=True)
+    X_enc.columns = [re.sub(r"[^A-Za-z0-9_]+", "_", str(c)).strip("_") for c in X_enc.columns]
+    return X_enc
