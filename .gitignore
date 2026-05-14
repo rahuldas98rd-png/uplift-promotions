@@ -11,7 +11,6 @@ __pycache__/
 # Data — never commit
 data/raw/
 data/interim/
-data/processed/
 
 # Notebooks
 .ipynb_checkpoints/
@@ -28,8 +27,6 @@ notes.txt
 
 # Data — must never be committed
 data/raw/*.csv
-data/processed/*.parquet
-data/processed/*.npy
 
 # Standard Python/IDE
 __pycache__/
