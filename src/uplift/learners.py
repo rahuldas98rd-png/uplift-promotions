@@ -126,3 +126,102 @@ class TLearner:
         mu1 = _predict_outcome(self.model_1_, X_enc, self.is_classifier_)
         mu0 = _predict_outcome(self.model_0_, X_enc, self.is_classifier_)
         return mu1 - mu0
+
+
+# ---------------------------------------------------------------------------
+# X-learner
+# ---------------------------------------------------------------------------
+
+
+class XLearner:
+    """Künzel et al. (2019) X-learner.
+
+    Four-stage estimator:
+      1. Fit μ_0(x) on control, μ_1(x) on treated  (same as T-learner).
+      2. Impute missing potential outcomes per observation:
+           D_1 = Y - μ_0(X)        for treated units
+           D_0 = μ_1(X) - Y        for control units
+      3. Regress imputed effects on X:
+           τ_1(x) on (X, D_1) using treated units
+           τ_0(x) on (X, D_0) using control units
+      4. Combine:  τ(x) = e(x) τ_0(x) + (1 − e(x)) τ_1(x)
+
+    Strengths
+    ---------
+    Fixes T-learner's variance: imputation lets information flow between
+    arms, so the smaller arm's CATE estimate benefits from the larger
+    arm's outcome model. Fixes S-learner's shrinkage: regularization
+    affects how heterogeneous τ̂ is, not how big it is on average.
+
+    The stage-3 regressors are always LightGBM regressors (not
+    classifiers), because the targets D are continuous regardless of
+    whether Y is binary.
+
+    Parameters
+    ----------
+    base_params
+        Hyperparameters forwarded to all underlying LightGBM models.
+    propensity_model
+        Optional propensity estimator with a .predict(X) -> array method.
+        If None, the constant training-set treatment rate is used as
+        propensity. For randomized data this is the right default.
+    """
+
+    def __init__(
+        self,
+        base_params: dict | None = None,
+        propensity_model=None,
+    ):
+        self.base_params = {**_default_params(), **(base_params or {})}
+        self.propensity_model = propensity_model
+
+    def fit(self, X: pd.DataFrame, T, Y) -> "XLearner":
+        X_enc = encode_features(X)
+        self.feature_cols_ = list(X_enc.columns)
+
+        T_arr = np.asarray(T)
+        Y_arr = np.asarray(Y)
+        treated = T_arr == 1
+
+        self.is_classifier_ = _is_binary(Y_arr)
+
+        # Stage 1: outcome models per arm (T-learner step)
+        self.mu_1_ = _make_model(self.is_classifier_, self.base_params)
+        self.mu_0_ = _make_model(self.is_classifier_, self.base_params)
+        self.mu_1_.fit(X_enc[treated], Y_arr[treated])
+        self.mu_0_.fit(X_enc[~treated], Y_arr[~treated])
+
+        # Stage 2: imputed treatment effects
+        # D_1 for treated units: we observed Y(1), impute Y(0) with μ_0
+        # D_0 for control units: we observed Y(0), impute Y(1) with μ_1
+        mu0_on_treated = _predict_outcome(self.mu_0_, X_enc[treated], self.is_classifier_)
+        mu1_on_control = _predict_outcome(self.mu_1_, X_enc[~treated], self.is_classifier_)
+        D_1 = Y_arr[treated] - mu0_on_treated
+        D_0 = mu1_on_control - Y_arr[~treated]
+
+        # Stage 3: regress imputed effects on X — always regressors
+        # because D is continuous (Y - prediction) regardless of Y's type
+        self.tau_1_ = LGBMRegressor(**self.base_params)
+        self.tau_0_ = LGBMRegressor(**self.base_params)
+        self.tau_1_.fit(X_enc[treated], D_1)
+        self.tau_0_.fit(X_enc[~treated], D_0)
+
+        # Fallback propensity: the marginal treatment rate from training.
+        # For randomized data, this is the true propensity and the right
+        # value to use everywhere.
+        self.train_propensity_ = float(treated.mean())
+        return self
+
+    def predict_cate(self, X: pd.DataFrame) -> np.ndarray:
+        X_enc = encode_features(X).reindex(columns=self.feature_cols_, fill_value=0)
+
+        tau_1 = self.tau_1_.predict(X_enc)
+        tau_0 = self.tau_0_.predict(X_enc)
+
+        # Stage 4: propensity-weighted average
+        if self.propensity_model is not None:
+            e = np.asarray(self.propensity_model.predict(X))
+        else:
+            e = self.train_propensity_  # scalar; numpy broadcasts
+
+        return e * tau_0 + (1 - e) * tau_1
